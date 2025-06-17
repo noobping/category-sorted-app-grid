@@ -1,0 +1,7 @@
+{
+  "uuid": "category-sorted-app-grid@noobping.dev",
+  "name": "Category-Sorted App Grid",
+  "description": "Sorts the GNOME Overview app grid by category, then alphabetically within each category.",
+  "shell-version": ["48","47"],
+  "url": "https://github.com/noobping/category-sorted-app-grid"
+}
