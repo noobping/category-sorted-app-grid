@@ -3,5 +3,6 @@
   "name": "Category-Sorted App Grid",
   "description": "Sorts the GNOME Overview app grid by category, then alphabetically within each category.",
   "shell-version": ["48","47"],
-  "url": "https://github.com/noobping/category-sorted-app-grid"
+  "url": "https://github.com/noobping/category-sorted-app-grid",
+  "version": 1
 }
