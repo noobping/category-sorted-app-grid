@@ -47,85 +47,105 @@ class CategoryGridSorter {
                 log(`${LOG_PREFIX}: Ensure any app folder icons update their contents`);
                 this._folderIcons.forEach(folderIcon => folderIcon.view._redisplay());
 
-                log(`${LOG_PREFIX}: Get all application icons (including folder icons) in their current order`);
+                log(`${LOG_PREFIX}: Get all application icons (including folders)`);
                 let icons = this._loadApps();
 
-                log(`${LOG_PREFIX}: Separate regular app icons from folder icons`);
+                // Separate normal app icons from folder icons
                 let appIcons = [];
                 let folderIcons = [];
                 for (let icon of icons) {
-                    if (icon.app) {
-                        appIcons.push(icon);
-                    } else {
-                        folderIcons.push(icon);
-                    }
+                    if (icon.app) appIcons.push(icon);
+                    else folderIcons.push(icon);
                 }
 
-                log(`${LOG_PREFIX}: Group by first category`);
-                let groups = {};
+                log(`${LOG_PREFIX}: Group apps by category (assign each app to its largest category)`);
+                let categoryCounts = {};
+                let appCategoriesMap = {};
+
+                // First pass: gather categories for each app and count category sizes
                 for (let icon of appIcons) {
                     let app = icon.app;
-                    let firstCategory = null;
+                    let categoriesStr = null;
+                    let catList = [];
                     try {
-                        // Use .desktop file info to get categories
+                        // Get the Categories field from the .desktop file (unparsed string)
                         let info = Gio.DesktopAppInfo.new(app.get_id());
-                        let categories = info.get_categories();
-                        if (categories) {
-                            // Take the first category from the semicolon-separated list
-                            let catsStr = categories.trim();
-                            if (catsStr.endsWith(';')) {
-                                catsStr = catsStr.slice(0, -1);
-                            }
-                            let catList = catsStr.split(';').filter(c => c.length > 0);
-                            if (catList.length > 0) {
-                                firstCategory = catList[0];
-                            }
-                        }
+                        categoriesStr = info.get_categories();
                     } catch (e) {
-                        log(`${LOG_PREFIX}: Error reading categories for ${icon.app.get_id()}: ${e}`);
+                        log(`${LOG_PREFIX}: Error reading categories for ${app.get_id()}: ${e}`);
                     }
-                    if (!firstCategory) {
-                        firstCategory = 'Other';
+                    if (categoriesStr) {
+                        let cats = categoriesStr.trim();
+                        if (cats.endsWith(';'))
+                            cats = cats.slice(0, -1);  // drop trailing semicolon if present
+                        catList = cats.split(';').filter(c => c.length > 0);
                     }
-                    if (!groups[firstCategory]) {
-                        groups[firstCategory] = [];
+                    if (catList.length === 0) {
+                        catList = ['Other'];  // default category if none specified
                     }
-                    // Preserve original ordering by pushing icons as they appear
-                    groups[firstCategory].push(icon);
+                    // Remove duplicate category names (just in case) and record them
+                    catList = [...new Set(catList)];
+                    appCategoriesMap[app.get_id()] = catList;
+                    // Update counts for each category this app belongs to
+                    for (let category of catList) {
+                        categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+                    }
                 }
 
-                // Sort category groups alphabetically by category name
+                // Second pass: assign each app to the category with the most apps
+                let groups = {};
+                for (let icon of appIcons) {
+                    let appId = icon.app.get_id();
+                    let categories = appCategoriesMap[appId] || ['Other'];
+                    // Pick the category with the highest count (largest group)
+                    let chosen = categories[0];
+                    for (let category of categories) {
+                        if (categoryCounts[category] > categoryCounts[chosen] ||
+                            (categoryCounts[category] === categoryCounts[chosen] &&
+                                category.localeCompare(chosen) < 0)) {
+                            chosen = category;
+                        }
+                    }
+                    // Add the app icon to its chosen category group
+                    if (!groups[chosen]) {
+                        groups[chosen] = [];
+                    }
+                    groups[chosen].push(icon);
+                }
+
+                // Sort categories alphabetically
                 let categoryNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
                 log(`${LOG_PREFIX}: Categories found: ${categoryNames.join(', ')}`);
 
-                // Build the new ordered list of icons: each category group, then all folders
+                // Build the new ordered list of icons: each category group (alphabetical), then all folders
                 let newOrder = [];
                 for (let category of categoryNames) {
+                    // (Optional: sort icons within each category alphabetically by name)
+                    groups[category].sort((a, b) => a.app.get_name().localeCompare(b.app.get_name()));
                     newOrder.push(...groups[category]);
                 }
-                // Place folder icons after all category groups
                 newOrder.push(...folderIcons);
 
-                // Remove icons that no longer exist
+                // Remove icons that are no longer present in the new order
                 let currentItems = this._orderedItems.slice();
-                let currentIds = currentItems.map(icon => icon.id);
                 let newIds = newOrder.map(icon => icon.id);
-                let removedIcons = currentItems.filter(icon => !newIds.includes(icon.id));
-                for (let icon of removedIcons) {
-                    this._removeItem(icon);
-                    icon.destroy();
+                for (let item of currentItems) {
+                    if (!newIds.includes(item.id)) {
+                        this._removeItem(item);
+                        item.destroy();
+                    }
                 }
 
-                // Add or move icons to match the new grouped order
+                // Add or move icons to match the new order
                 const { itemsPerPage } = this._grid;
                 newOrder.forEach((icon, index) => {
                     const page = Math.floor(index / itemsPerPage);
                     const position = index % itemsPerPage;
-                    if (!currentIds.includes(icon.id)) {
-                        // New icon (e.g., newly installed app or new folder)
+                    if (!currentItems.includes(icon)) {
+                        // New icon (e.g. newly installed app or new folder)
                         this._addItem(icon, page, position);
                     } else {
-                        // Existing icon: update its position if changed
+                        // Existing icon: update its position if it changed
                         this._moveItem(icon, page, position);
                     }
                 });
