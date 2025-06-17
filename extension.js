@@ -221,23 +221,13 @@ class CategoryGridSorter {
         );
     }
 
-    /**
-     * Reorder the app grid if not already updating.
-     * A slight delay is used to avoid conflicts with animations.
-     */
     reorderGrid(logText) {
-        console.info(`${LOG_PREFIX}: ${logText}`);
+        console.debug(`${LOG_PREFIX}: ${logText}`);
         // Avoid overlapping updates and wait until any ongoing page update is finished
         if (!this._currentlyUpdating && !this._appDisplay._pageManager._updatingPages) {
             this._currentlyUpdating = true;
-            // Slight delay to avoid clashing with animations
-            this._reorderGridTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                // Rebuild the app grid with the new ordering
-                this._appDisplay._redisplay();
-                this._currentlyUpdating = false;
-                this._reorderGridTimeoutId = null;
-                return GLib.SOURCE_REMOVE;
-            });
+            this._appDisplay._redisplay(); // Rebuild the app grid with the new ordering
+            this._currentlyUpdating = false;
         }
     }
 
@@ -248,11 +238,6 @@ class CategoryGridSorter {
         this._appSystem.disconnectObject(this);
         this._shellSettings.disconnectObject(this);
         this._folderSettings.disconnectObject(this);
-
-        // Cancel any pending timeout
-        if (this._reorderGridTimeoutId != null) {
-            GLib.Source.remove(this._reorderGridTimeoutId);
-        }
 
         // Remove all patched methods (restore original Shell behavior)
         this._injectionManager.clear();
