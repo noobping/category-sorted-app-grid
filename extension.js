@@ -49,7 +49,20 @@ class CategoryGridSorter {
                 this._folderIcons.forEach(folderIcon => folderIcon.view._redisplay());
 
                 log(`${LOG_PREFIX}: Get all application icons (including folders)`);
-                let icons = this._loadApps();
+                // Start with current user-ordered items (if any)
+                let userOrdered = this._orderedItems ? [...this._orderedItems] : [];
+                let allIcons = this._loadApps();
+
+                // Remove any icons that no longer exist
+                userOrdered = userOrdered.filter(icon => allIcons.some(newIcon => newIcon.id === icon.id));
+
+                // Add any new icons (apps or folders) that are not in the current list
+                for (let icon of allIcons) {
+                    if (!userOrdered.some(item => item.id === icon.id)) {
+                        userOrdered.push(icon);
+                    }
+                }
+                let icons = userOrdered;
 
                 // Separate normal app icons from folder icons
                 let appIcons = [], folderIcons = [];
