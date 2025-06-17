@@ -12,7 +12,7 @@ const IGNORE_CATEGORIES = ['GTK', 'Qt', 'X-GNOME-Settings-Panel', 'GNOME'];
 
 export default class CategorySortedAppGridExtension extends Extension {
     enable() {
-        log(`${LOG_PREFIX}: Initialize the category-based grid sorter and perform initial grouping`);
+        console.debug(`${LOG_PREFIX}: Initialize the category-based grid sorter and perform initial grouping`);
         this._gridSorter = new CategoryGridSorter();
         this._gridSorter.reorderGrid('Reordering app grid');
     }
@@ -22,7 +22,7 @@ export default class CategorySortedAppGridExtension extends Extension {
         if (this._gridSorter) {
             this._gridSorter.destroy();
             this._gridSorter = null;
-            log(`${LOG_PREFIX}: Extension disabled, sorter destroyed`);
+            console.debug(`${LOG_PREFIX}: Extension disabled, sorter destroyed`);
         }
     }
 }
@@ -36,7 +36,7 @@ class CategoryGridSorter {
         this._folderSettings = new Gio.Settings({ schema: 'org.gnome.desktop.app-folders' });
         this._currentlyUpdating = false;
 
-        log(`${LOG_PREFIX}: Initializing sorter...`);
+        console.debug(`${LOG_PREFIX}: Initializing sorter...`);
         this._patchShell();       // Patch GNOME Shell methods for custom behavior
         this._connectListeners(); // Connect event listeners for dynamic updates
     }
@@ -45,10 +45,10 @@ class CategoryGridSorter {
         // Override the app grid redisplay method to group apps by category
         this._injectionManager.overrideMethod(AppDisplay.AppDisplay.prototype, '_redisplay', () => {
             return function () {
-                log(`${LOG_PREFIX}: Ensure any app folder icons update their contents`);
+                console.debug(`${LOG_PREFIX}: Ensure any app folder icons update their contents`);
                 this._folderIcons.forEach(folderIcon => folderIcon.view._redisplay());
 
-                log(`${LOG_PREFIX}: Get all application icons (including folders)`);
+                console.debug(`${LOG_PREFIX}: Get all application icons (including folders)`);
                 // Start with current user-ordered items (if any)
                 let userOrdered = this._orderedItems ? [...this._orderedItems] : [];
                 let allIcons = this._loadApps();
@@ -90,7 +90,7 @@ class CategoryGridSorter {
                             categoriesList = catsStr.split(';').filter(c => c.length > 0);
                         }
                     } catch (e) {
-                        log(`${LOG_PREFIX}: Error reading categories for ${app.get_id()}: ${e}`);
+                        console.error(`${LOG_PREFIX}: Error reading categories for ${app.get_id()}: ${e}`);
                     }
                     if (categoriesList.length === 0) {
                         categoriesList = ['Other'];
@@ -142,7 +142,7 @@ class CategoryGridSorter {
 
                 // Sort category groups alphabetically
                 let categoryNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
-                log(`${LOG_PREFIX}: Categories found: ${categoryNames.join(', ')}`);
+                console.info(`${LOG_PREFIX}: Categories found: ${categoryNames.join(', ')}`);
 
                 // Build new ordered list: apps grouped by category, then folders
                 let newOrder = [];
@@ -178,13 +178,13 @@ class CategoryGridSorter {
                 // Update the ordered list and signal that the view has loaded
                 this._orderedItems = newOrder;
                 this.emit('view-loaded');
-                log(`${LOG_PREFIX}: Redisplay complete, ${newOrder.length} icons placed`);
+                console.info(`${LOG_PREFIX}: Redisplay complete, ${newOrder.length} icons placed`);
             };
         });
     }
 
     _connectListeners() {
-        log(`${LOG_PREFIX}: Connecting listeners...`);
+        console.debug(`${LOG_PREFIX}: Connecting listeners...`);
         // Reorder when the app grid layout or favorites list changes (apps moved or layout altered)
         this._shellSettings.connectObject(
             'changed::app-picker-layout', () => this.reorderGrid('App grid layout changed, triggering reorder...'),
@@ -226,7 +226,7 @@ class CategoryGridSorter {
      * A slight delay is used to avoid conflicts with animations.
      */
     reorderGrid(logText) {
-        log(`${LOG_PREFIX}: ${logText}`);
+        console.info(`${LOG_PREFIX}: ${logText}`);
         // Avoid overlapping updates and wait until any ongoing page update is finished
         if (!this._currentlyUpdating && !this._appDisplay._pageManager._updatingPages) {
             this._currentlyUpdating = true;
@@ -242,7 +242,7 @@ class CategoryGridSorter {
     }
 
     destroy() {
-        log(`${LOG_PREFIX}: Destroying sorter, disconnecting signals and clearing patches...`);
+        console.debug(`${LOG_PREFIX}: Destroying sorter, disconnecting signals and clearing patches...`);
         Main.overview.disconnectObject(this);
         Controls._stateAdjustment.disconnectObject(this);
         this._appSystem.disconnectObject(this);
@@ -256,6 +256,6 @@ class CategoryGridSorter {
 
         // Remove all patched methods (restore original Shell behavior)
         this._injectionManager.clear();
-        log(`${LOG_PREFIX}: Patches cleared`);
+        console.debug(`${LOG_PREFIX}: Patches cleared`);
     }
 }
