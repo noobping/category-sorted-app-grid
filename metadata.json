@@ -2,7 +2,7 @@
   "uuid": "category-sorted-app-grid@noobping.dev",
   "name": "Category sorted App Grid",
   "description": "Sorts the GNOME Overview app grid by category.",
-  "shell-version": ["48","47"],
+  "shell-version": ["49","48","47"],
   "url": "https://github.com/noobping/category-sorted-app-grid",
   "version": 1
 }
