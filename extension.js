@@ -1,4 +1,3 @@
-import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Shell from 'gi://Shell';
 import * as AppDisplay from 'resource:///org/gnome/shell/ui/appDisplay.js';
@@ -6,201 +5,241 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as OverviewControls from 'resource:///org/gnome/shell/ui/overviewControls.js';
 import { Extension, InjectionManager } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const Controls = Main.overview?._overview?._controls;
+const Controls = Main.overview._overview._controls;
 const LOG_PREFIX = 'CategorySortedAppGrid';
 const IGNORE_CATEGORIES = ['GTK', 'Qt', 'X-GNOME-Settings-Panel', 'GNOME'];
 
 export default class CategorySortedAppGridExtension extends Extension {
     enable() {
-        try {
-            console.debug(`${LOG_PREFIX}: Initializing category-based grid sorter`);
-            if (!Controls) throw new Error('Overview controls not found');
-            this._gridSorter = new CategoryGridSorter();
-        } catch (e) {
-            console.error(`${LOG_PREFIX}: Failed to enable extension: ${e}`);
-        }
+        console.debug(`${LOG_PREFIX}: Initialize the category-based grid sorter and perform initial grouping`);
+        this._gridSorter = new CategoryGridSorter();
+        this._gridSorter.reorderGrid('Reordering app grid');
     }
 
     disable() {
-        try {
-            if (this._gridSorter) {
-                this._gridSorter.destroy();
-                this._gridSorter = null;
-                console.debug(`${LOG_PREFIX}: Extension disabled`);
-            }
-        } catch (e) {
-            console.error(`${LOG_PREFIX}: Error during disable: ${e}`);
+        // Disconnect signals and remove patches
+        if (this._gridSorter) {
+            this._gridSorter.destroy();
+            this._gridSorter = null;
+            console.debug(`${LOG_PREFIX}: Extension disabled, sorter destroyed`);
         }
     }
 }
 
 class CategoryGridSorter {
     constructor() {
-        try {
-            this._injectionManager = new InjectionManager();
-            this._appSystem = Shell.AppSystem.get_default();
-            this._appDisplay = Controls?._appDisplay;
-            this._shellSettings = new Gio.Settings({ schema: 'org.gnome.shell' });
-            this._folderSettings = new Gio.Settings({ schema: 'org.gnome.desktop.app-folders' });
+        this._injectionManager = new InjectionManager();
+        this._appSystem = Shell.AppSystem.get_default();
+        this._appDisplay = Controls._appDisplay;
+        this._shellSettings = new Gio.Settings({ schema: 'org.gnome.shell' });
+        this._folderSettings = new Gio.Settings({ schema: 'org.gnome.desktop.app-folders' });
+        this._currentlyUpdating = false;
 
-            if (this._appDisplay?._pageManager && !this._appDisplay._pageManager._updatingPages)
-                this._appDisplay._redisplay?.();
-
-            this._patchShell();
-            this._connectListeners();
-        } catch (e) {
-            console.error(`${LOG_PREFIX}: Initialization error: ${e}`);
-        }
+        console.debug(`${LOG_PREFIX}: Initializing sorter...`);
+        this._patchShell();       // Patch GNOME Shell methods for custom behavior
+        this._connectListeners(); // Connect event listeners for dynamic updates
     }
 
     _patchShell() {
-        try {
-            if (!AppDisplay.AppDisplay.prototype._redisplay) {
-                console.warn(`${LOG_PREFIX}: No _redisplay method to patch`);
-                return;
-            }
+        // Override the app grid redisplay method to group apps by category
+        this._injectionManager.overrideMethod(AppDisplay.AppDisplay.prototype, '_redisplay', () => {
+            return function () {
+                console.debug(`${LOG_PREFIX}: Ensure any app folder icons update their contents`);
+                this._folderIcons.forEach(folderIcon => folderIcon.view._redisplay());
 
-            this._injectionManager.overrideMethod(AppDisplay.AppDisplay.prototype, '_redisplay', () => {
-                return function () {
-                    if (!this) return;
-                    try {
-                        this._folderIcons?.forEach(folderIcon => folderIcon?.view?._redisplay());
+                console.debug(`${LOG_PREFIX}: Get all application icons (including folders)`);
+                // Start with current user-ordered items (if any)
+                let userOrdered = this._orderedItems ? [...this._orderedItems] : [];
+                let allIcons = this._loadApps();
 
-                        const loadApps = this._loadApps?.();
-                        if (!loadApps) return;
+                // Remove any icons that no longer exist
+                userOrdered = userOrdered.filter(icon => allIcons.some(newIcon => newIcon.id === icon.id));
 
-                        let userOrdered = Array.isArray(this._orderedItems) ? [...this._orderedItems] : [];
-                        const allIcons = loadApps;
-
-                        userOrdered = userOrdered.filter(icon => icon && allIcons.some(n => n.id === icon.id));
-                        for (let icon of allIcons) {
-                            if (icon && !userOrdered.some(i => i.id === icon.id)) userOrdered.push(icon);
-                        }
-
-                        let appIcons = [], folderIcons = [];
-                        for (let icon of userOrdered) {
-                            if (!icon) continue;
-                            if (icon.app) appIcons.push(icon);
-                            else folderIcons.push(icon);
-                        }
-
-                        const categoryCounts = {};
-                        const appCategoryChoice = new Map();
-
-                        // Gather categories and count them
-                        for (let icon of appIcons) {
-                            if (!icon.app) continue;
-                            let categoriesList = [];
-                            try {
-                                const info = Gio.DesktopAppInfo.new(icon.app.get_id());
-                                const catsStr = info?.get_categories()?.trim() || '';
-                                categoriesList = catsStr ? catsStr.replace(/;$/, '').split(';') : [];
-                            } catch (e) {
-                                console.error(`${LOG_PREFIX}: Error reading categories for app: ${e}`);
-                            }
-                            if (!categoriesList.length) categoriesList = ['Other'];
-
-                            const hasNonIgnored = categoriesList.some(c => !IGNORE_CATEGORIES.includes(c));
-                            const filteredCats = hasNonIgnored ? categoriesList.filter(c => !IGNORE_CATEGORIES.includes(c)) : categoriesList;
-
-                            appCategoryChoice.set(icon, filteredCats);
-                            filteredCats.forEach(cat => categoryCounts[cat] = (categoryCounts[cat] || 0) + 1);
-                        }
-
-                        // Assign each app to the category with the most apps
-                        const groups = {};
-                        for (let [icon, cats] of appCategoryChoice.entries()) {
-                            if (!cats.length) continue;
-                            const chosen = cats.reduce((best, cur) => {
-                                if ((categoryCounts[cur] || 0) > (categoryCounts[best] || 0)) return cur;
-                                if ((categoryCounts[cur] || 0) === (categoryCounts[best] || 0)) return cur.localeCompare(best) < 0 ? cur : best;
-                                return best;
-                            }, cats[0]);
-                            groups[chosen] = groups[chosen] || [];
-                            groups[chosen].push(icon);
-                        }
-
-                        // Sort category groups alphabetically
-                        const categoryNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
-                        console.info(`${LOG_PREFIX}: Categories: ${categoryNames.join(', ')}`);
-
-                        // Build new ordered list: apps grouped by category
-                        let newOrder = [...folderIcons];
-                        categoryNames.forEach(cat => { newOrder.push(...groups[cat]); });
-
-                        // Remove icons no longer present
-                        const currentItems = Array.isArray(this._orderedItems) ? [...this._orderedItems] : [];
-                        const newIds = newOrder.map(i => i.id);
-
-                        currentItems.forEach(item => {
-                            if (item && !newIds.includes(item.id)) {
-                                try { this._removeItem?.(item); item.destroy?.(); } catch { };
-                            }
-                        });
-
-                        // Add or move icons to match the new order
-                        const itemsPerPage = this._grid?.itemsPerPage || 1;
-                        newOrder.forEach((icon, idx) => {
-                            if (!icon) return;
-                            const page = Math.floor(idx / itemsPerPage);
-                            const pos = idx % itemsPerPage;
-                            try {
-                                if (!currentItems.includes(icon)) this._addItem?.(icon, page, pos);
-                                else this._moveItem?.(icon, page, pos);
-                            } catch { };
-                        });
-
-                        this._orderedItems = newOrder;
-                        this.emit?.('view-loaded');
-                        console.info(`${LOG_PREFIX}: Redisplay done`);
-                    } catch (inner) {
-                        console.error(`${LOG_PREFIX}: Redisplay error: ${inner}`);
+                // Add any new icons (apps or folders) that are not in the current list
+                for (let icon of allIcons) {
+                    if (!userOrdered.some(item => item.id === icon.id)) {
+                        userOrdered.push(icon);
                     }
-                };
-            });
+                }
+                let icons = userOrdered;
 
-            if (AppDisplay.AppDisplay.prototype._onDestroy) {
-                this._injectionManager.overrideMethod(AppDisplay.AppDisplay.prototype, '_onDestroy', (orig) => function (...args) {
+                // Separate normal app icons from folder icons
+                let appIcons = [], folderIcons = [];
+                for (let icon of icons) {
+                    if (icon.app) appIcons.push(icon);
+                    else folderIcons.push(icon);
+                }
+
+                // Determine category for each app icon
+                let categoryCounts = {};
+                let appCategoryChoice = new Map(); // Map app -> [eligible categories]
+
+                // First pass: gather categories and count them
+                for (let icon of appIcons) {
+                    let app = icon.app;
+                    let categoriesList = [];
                     try {
-                        return orig.apply(this, args);
-                    } catch (inner) {
-                        console.error(`${LOG_PREFIX}: onDestroy error: ${inner}`);
+                        // Get the Categories field from the .desktop file
+                        let info = Gio.DesktopAppInfo.new(app.get_id());
+                        let catsStr = info ? info.get_categories() : null;
+                        if (catsStr) {
+                            catsStr = catsStr.trim();
+                            if (catsStr.endsWith(';'))
+                                catsStr = catsStr.slice(0, -1);
+                            categoriesList = catsStr.split(';').filter(c => c.length > 0);
+                        }
+                    } catch (e) {
+                        console.error(`${LOG_PREFIX}: Error reading categories for ${app.get_id()}: ${e}`);
+                    }
+                    if (categoriesList.length === 0) {
+                        categoriesList = ['Other'];
+                    }
+
+                    // Apply ignore list filtering:
+                    let filteredCats;
+                    const hasNonIgnored = categoriesList.some(cat => !IGNORE_CATEGORIES.includes(cat));
+                    if (hasNonIgnored) {
+                        // use only non-ignored categories
+                        filteredCats = categoriesList.filter(cat => !IGNORE_CATEGORIES.includes(cat));
+                    } else {
+                        // all categories are ignored (or none non-ignored), so keep them
+                        filteredCats = categoriesList;
+                    }
+
+                    appCategoryChoice.set(icon, filteredCats);
+
+                    // Count each category for size comparison
+                    for (let cat of filteredCats) {
+                        if (!categoryCounts[cat]) categoryCounts[cat] = 0;
+                        categoryCounts[cat] += 1;
+                    }
+                }
+
+                // Second pass: assign each app to the category with the most apps
+                let groups = {};
+                for (let icon of appIcons) {
+                    let cats = appCategoryChoice.get(icon);  // categories considered for this app
+                    let chosenCategory = cats[0];
+                    if (cats.length > 1) {
+                        // find category with max count
+                        chosenCategory = cats.reduce((bestCat, currentCat) => {
+                            if (categoryCounts[currentCat] > categoryCounts[bestCat]) {
+                                return currentCat;
+                            } else if (categoryCounts[currentCat] === categoryCounts[bestCat]) {
+                                // tie-breaker: choose alphabetically
+                                return (currentCat.localeCompare(bestCat) < 0) ? currentCat : bestCat;
+                            }
+                            return bestCat;
+                        }, cats[0]);
+                    }
+                    // Add the app icon to its chosen category group
+                    if (!groups[chosenCategory]) {
+                        groups[chosenCategory] = [];
+                    }
+                    groups[chosenCategory].push(icon);
+                }
+
+                // Sort category groups alphabetically
+                let categoryNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+                console.info(`${LOG_PREFIX}: Categories found: ${categoryNames.join(', ')}`);
+
+                // Build new ordered list: apps grouped by category, then folders
+                let newOrder = [];
+                for (let category of categoryNames) {
+                    newOrder.push(...groups[category]);
+                }
+                newOrder.push(...folderIcons);
+
+                // Remove icons that are no longer present in the new order
+                let currentItems = this._orderedItems.slice();
+                let newIds = newOrder.map(icon => icon.id);
+                for (let item of currentItems) {
+                    if (!newIds.includes(item.id)) {
+                        this._removeItem(item);
+                        item.destroy();
+                    }
+                }
+
+                // Add or move icons to match the new order
+                const { itemsPerPage } = this._grid;
+                newOrder.forEach((icon, index) => {
+                    const page = Math.floor(index / itemsPerPage);
+                    const position = index % itemsPerPage;
+                    if (!currentItems.includes(icon)) {
+                        // New icon (e.g. newly installed app or new folder)
+                        this._addItem(icon, page, position);
+                    } else {
+                        // Existing icon: update its position if it changed
+                        this._moveItem(icon, page, position);
                     }
                 });
-            }
-        } catch (e) {
-            console.error(`${LOG_PREFIX}: PatchShell error: ${e}`);
-        }
+
+                // Update the ordered list and signal that the view has loaded
+                this._orderedItems = newOrder;
+                this.emit('view-loaded');
+                console.info(`${LOG_PREFIX}: Redisplay complete, ${newOrder.length} icons placed`);
+            };
+        });
     }
 
     _connectListeners() {
-        try {
-            this._shellSettings?.connectObject('changed::app-picker-layout', () => this._appDisplay?._pageManager && !this._appDisplay._pageManager._updatingPages && this._appDisplay._redisplay?.(), this);
-            this._shellSettings?.connectObject('changed::favorite-apps', () => this._appDisplay?._pageManager && !this._appDisplay._pageManager._updatingPages && this._appDisplay._redisplay?.(), this);
-            Main.overview?.connectObject('item-drag-end', () => this._appDisplay?._pageManager && !this._appDisplay._pageManager._updatingPages && this._appDisplay._redisplay?.(), this);
-            this._folderSettings?.connectObject('changed::folder-children', () => this._appDisplay?._pageManager && !this._appDisplay._pageManager._updatingPages && this._appDisplay._redisplay?.(), this);
-            this._appSystem?.connectObject('installed-changed', () => this._appDisplay?._pageManager && !this._appDisplay._pageManager._updatingPages && this._appDisplay._redisplay?.(), this);
-            Controls?._stateAdjustment?.connectObject('notify::value', () => {
-                if (Controls._stateAdjustment.value === OverviewControls.ControlsState.APP_GRID && this._appDisplay?._pageManager && !this._appDisplay._pageManager._updatingPages) {
-                    this._appDisplay._redisplay?.();
+        console.debug(`${LOG_PREFIX}: Connecting listeners...`);
+        // Reorder when the app grid layout or favorites list changes (apps moved or layout altered)
+        this._shellSettings.connectObject(
+            'changed::app-picker-layout', () => this.reorderGrid('App grid layout changed, triggering reorder...'),
+            'changed::favorite-apps', () => this.reorderGrid('Favorite apps changed, triggering reorder...'),
+            this
+        );
+
+        // Reorder after an app icon drag-and-drop (user rearranged apps)
+        Main.overview.connectObject(
+            'item-drag-end', () => this.reorderGrid('App movement detected, triggering reorder...'),
+            this
+        );
+
+        // Reorder when app folders are created or deleted
+        this._folderSettings.connectObject(
+            'changed::folder-children', () => this.reorderGrid('Folders changed, triggering reorder...'),
+            this
+        );
+
+        // Reorder when apps are installed or removed
+        this._appSystem.connectObject(
+            'installed-changed', () => this.reorderGrid('Installed apps changed, triggering reorder...'),
+            this
+        );
+
+        // Reorder every time the Applications overview (app grid) is opened
+        Controls._stateAdjustment.connectObject(
+            'notify::value', () => {
+                if (Controls._stateAdjustment.value === OverviewControls.ControlsState.APP_GRID) {
+                    this.reorderGrid('App grid opened, triggering reorder...');
                 }
-            }, this);
-        } catch (e) {
-            console.error(`${LOG_PREFIX}: Listener error: ${e}`);
+            },
+            this
+        );
+    }
+
+    reorderGrid(logText) {
+        console.debug(`${LOG_PREFIX}: ${logText}`);
+        // Avoid overlapping updates and wait until any ongoing page update is finished
+        if (!this._currentlyUpdating && !this._appDisplay._pageManager._updatingPages) {
+            this._currentlyUpdating = true;
+            this._appDisplay._redisplay(); // Rebuild the app grid with the new ordering
+            this._currentlyUpdating = false;
         }
     }
 
     destroy() {
-        try {
-            Main.overview?.disconnectObject(this);
-            Controls?._stateAdjustment?.disconnectObject(this);
-            this._appSystem?.disconnectObject(this);
-            this._shellSettings?.disconnectObject(this);
-            this._folderSettings?.disconnectObject(this);
-            this._injectionManager?.clear();
-            console.debug(`${LOG_PREFIX}: Restored`);
-        } catch (e) {
-            console.error(`${LOG_PREFIX}: Restore error: ${e}`);
-        }
+        console.debug(`${LOG_PREFIX}: Destroying sorter, disconnecting signals and clearing patches...`);
+        Main.overview.disconnectObject(this);
+        Controls._stateAdjustment.disconnectObject(this);
+        this._appSystem.disconnectObject(this);
+        this._shellSettings.disconnectObject(this);
+        this._folderSettings.disconnectObject(this);
+
+        // Remove all patched methods (restore original Shell behavior)
+        this._injectionManager.clear();
+        console.debug(`${LOG_PREFIX}: Patches cleared`);
     }
 }
