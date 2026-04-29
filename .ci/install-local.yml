@@ -1,4 +1,5 @@
 name: install-local
+needs: check
 on:
   - manual
   - pre-push
@@ -16,10 +17,9 @@ steps:
       rm -rf "$target"
       mkdir -p "$target"
 
-      install -m0644 \
-        extension.js \
-        metadata.json \
-        "$target/"
+      while IFS= read -r file; do
+        install -m0644 "$file" "$target/"
+      done < extension-files.txt
 
       printf 'Installed %s to %s\n' "$uuid" "$target"
 

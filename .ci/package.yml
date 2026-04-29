@@ -1,6 +1,8 @@
 name: package
+needs: check
 on:
   - manual
+  - pre-push
 
 artifacts:
   paths:
@@ -23,11 +25,10 @@ steps:
       zip_file="dist/$uuid.zip"
       rm -f "$zip_file"
 
-      zip -9 -X "$zip_file" \
-        extension.js \
-        metadata.json
+      zip -9 -X "$zip_file" -@ < extension-files.txt
 
-      zipinfo -1 "$zip_file" | grep -qx metadata.json
-      zipinfo -1 "$zip_file" | grep -qx extension.js
+      while IFS= read -r file; do
+        zipinfo -1 "$zip_file" | grep -Fxq "$file"
+      done < extension-files.txt
 
       printf 'Created %s\n' "$zip_file"

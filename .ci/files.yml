@@ -1,0 +1,34 @@
+name: files
+on:
+  - manual
+  - pre-push
+
+artifacts:
+  paths:
+    - extension-files.txt
+  mode: keep
+
+steps:
+  - name: generate extension file manifest
+    run: |
+      set -eu
+
+      output="extension-files.txt"
+      tmp="$output.tmp"
+
+      {
+        printf '%s\n' extension.js
+
+        (
+          for file in *.js; do
+            [ -e "$file" ] || continue
+            [ "$file" = extension.js ] && continue
+            printf '%s\n' "$file"
+          done
+        ) | sort
+
+        printf '%s\n' metadata.json
+      } > "$tmp"
+
+      mv "$tmp" "$output"
+      cat "$output"
