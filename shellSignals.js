@@ -3,15 +3,12 @@ import * as OverviewControls from 'resource:///org/gnome/shell/ui/overviewContro
 
 import { formatError, logDebug } from './logging.js';
 
-const APP_FOLDERS_SCHEMA = 'org.gnome.desktop.app-folders';
-
 export default class ShellSignalManager {
     constructor({ stateAdjustment, appSystem, reorderGrid, warnOnce }) {
         this._stateAdjustment = stateAdjustment;
         this._appSystem = appSystem;
         this._reorderGrid = reorderGrid;
         this._warnOnce = warnOnce;
-        this._folderSettings = null;
         this._destroyed = false;
     }
 
@@ -31,8 +28,6 @@ export default class ShellSignalManager {
         this._connectObject(this._appSystem,
             'installed-changed', () => this._reorderGrid('Installed apps changed, triggering reorder...'));
 
-        this._connectFolderSettings();
-
         this._connectObject(this._stateAdjustment,
             'notify::value', () => {
                 if (this._stateAdjustment?.value === OverviewControls.ControlsState.APP_GRID)
@@ -49,8 +44,6 @@ export default class ShellSignalManager {
         this._disconnectObject(this._stateAdjustment);
         this._disconnectObject(global.settings);
         this._disconnectObject(this._appSystem);
-        this._disconnectObject(this._folderSettings);
-        this._folderSettings = null;
     }
 
     _connectObject(object, ...signalsAndCallbacks) {
@@ -65,23 +58,6 @@ export default class ShellSignalManager {
         } catch (e) {
             this._warnOnce('connect-object-failed',
                 `Could not connect a Shell signal (${formatError(e)}); some automatic reorders may be skipped`);
-        }
-    }
-
-    _connectFolderSettings() {
-        if (typeof global.get_settings !== 'function') {
-            logDebug('global.get_settings is unavailable');
-            return;
-        }
-
-        try {
-            this._folderSettings = global.get_settings(APP_FOLDERS_SCHEMA);
-            this._connectObject(this._folderSettings,
-                'changed::folder-children', () => this._reorderGrid('Folders changed, triggering reorder...'));
-        } catch (e) {
-            this._folderSettings = null;
-            this._warnOnce('folder-settings-failed',
-                `Could not watch app folder settings (${formatError(e)}); folder changes may require reopening the app grid`);
         }
     }
 
