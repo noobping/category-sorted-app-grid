@@ -7,7 +7,7 @@ const IGNORE_CATEGORIES = ['GTK', 'Qt', 'X-GNOME-Settings-Panel', 'GNOME'];
 export function buildCategoryPositions(appDisplay, loadedIcons) {
     const icons = (Array.isArray(loadedIcons) ? loadedIcons : [])
         .filter(icon => icon && icon !== appDisplay._placeholder);
-    const context = buildCategoryContext(icons);
+    const context = buildCategoryContext(appDisplay, icons);
     const orderedIcons = [...icons].sort((a, b) => compareIcons(a, b, context));
     const itemsPerPage = getItemsPerPage(appDisplay, orderedIcons.length);
     const positions = new Map();
@@ -35,9 +35,10 @@ function getItemsPerPage(appDisplay, fallbackCount) {
     return Math.max(fallbackCount || 1, 1);
 }
 
-function buildCategoryContext(icons) {
+function buildCategoryContext(appDisplay, icons) {
     const categoriesById = new Map();
     const categoryCounts = new Map();
+    const layoutPositionsById = buildLayoutPositions(appDisplay, icons);
 
     for (const icon of icons) {
         if (!icon.app)
@@ -50,7 +51,36 @@ function buildCategoryContext(icons) {
             categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
     }
 
-    return { categoriesById, categoryCounts };
+    return { categoriesById, categoryCounts, layoutPositionsById };
+}
+
+function buildLayoutPositions(appDisplay, icons) {
+    const pageManager = appDisplay?._pageManager;
+
+    if (typeof pageManager?.getAppPosition !== 'function')
+        return new Map();
+
+    // Read the saved Shell layout directly; _getItemPosition is patched while sorting.
+    const positions = new Map();
+
+    for (const icon of icons) {
+        try {
+            const [page, position] = pageManager.getAppPosition(icon.id);
+
+            if (isValidLayoutPosition(page, position))
+                positions.set(icon.id, [page, position]);
+        } catch (e) {
+            logDebug(`Error reading saved app position: ${formatError(e)}`);
+            break;
+        }
+    }
+
+    return positions;
+}
+
+function isValidLayoutPosition(page, position) {
+    return Number.isFinite(page) && Number.isFinite(position) &&
+        page >= 0 && position >= 0;
 }
 
 function compareIcons(a, b, context) {
@@ -67,7 +97,31 @@ function compareIcons(a, b, context) {
             return categoryCompare;
     }
 
+    const layoutCompare = compareLayoutPositions(a, b, context);
+    if (layoutCompare !== 0)
+        return layoutCompare;
+
     return getIconName(a).localeCompare(getIconName(b));
+}
+
+function compareLayoutPositions(a, b, context) {
+    const aPosition = context.layoutPositionsById.get(a.id);
+    const bPosition = context.layoutPositionsById.get(b.id);
+
+    if (!aPosition && !bPosition)
+        return 0;
+    if (!aPosition)
+        return 1;
+    if (!bPosition)
+        return -1;
+
+    const [aPage, aIndex] = aPosition;
+    const [bPage, bIndex] = bPosition;
+
+    if (aPage !== bPage)
+        return aPage - bPage;
+
+    return aIndex - bIndex;
 }
 
 function chooseCategory(icon, context) {
