@@ -1,4 +1,5 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-default.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/noobping/category-sorted-app-grid/actions/workflows/ci.yml/badge.svg)](https://github.com/noobping/category-sorted-app-grid/actions/workflows/ci.yml)
 
 # Category sorted App Grid
 
