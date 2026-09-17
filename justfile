@@ -81,15 +81,21 @@ package:
     #!/usr/bin/env bash
     set -euo pipefail
     artifact='dist/category-sorted-app-grid@noobping.dev.shell-extension.zip'
+    files=(*.js metadata.json LICENSE)
+    archive_args=()
+
+    for file in "${files[@]}"; do
+        test -s "$file"
+        archive_args+=(--add-file="$file")
+    done
+
     empty_tree="$(git hash-object -t tree /dev/null)"
     mkdir -p dist
     rm -f -- "$artifact"
     git archive \
         --format=zip \
         --output="$artifact" \
-        --add-file=extension.js \
-        --add-file=metadata.json \
-        --add-file=LICENSE \
+        "${archive_args[@]}" \
         "$empty_tree"
     test -s "$artifact"
     printf 'Created %s\n' "$artifact"

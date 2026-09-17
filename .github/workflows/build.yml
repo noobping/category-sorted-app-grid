@@ -1,0 +1,124 @@
+name: Build
+
+on:
+  push: {}
+  pull_request: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Build with Pipeline
+        uses: noobping/pipeline@continuous
+        with:
+          arguments: |
+            --cap-jobs
+            4
+            build
+
+      - name: Upload extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: category-sorted-app-grid
+          path: dist/*.zip
+          if-no-files-found: error
+
+  prerelease:
+    name: Pre-release
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: build
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read GNOME version
+        id: gnome
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+
+          with open("metadata.json", encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+
+          version = max(map(int, metadata["shell-version"]))
+          print(f"version={version}")
+          print(f"tag=gnome-{version}")
+          PY
+
+      - name: Download extension
+        uses: actions/download-artifact@v5
+        with:
+          name: category-sorted-app-grid
+          path: dist
+
+      - name: Create GNOME pre-release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GNOME_VERSION: ${{ steps.gnome.outputs.version }}
+          PRERELEASE_TAG: ${{ steps.gnome.outputs.tag }}
+        run: |
+          archives=(dist/*.zip)
+          if [[ ${#archives[@]} -ne 1 || ! -f ${archives[0]} ]]; then
+            echo "expected exactly one extension archive" >&2
+            exit 1
+          fi
+
+          api_error=$(mktemp)
+          trap 'rm -f "$api_error"' EXIT
+
+          if is_prerelease=$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$PRERELEASE_TAG" \
+            --jq '.prerelease' 2>"$api_error"); then
+            if [[ $is_prerelease != true ]]; then
+              echo "$PRERELEASE_TAG is an immutable release; leaving it unchanged"
+              exit 0
+            fi
+
+            echo "replacing prerelease $PRERELEASE_TAG"
+            gh release delete "$PRERELEASE_TAG" --yes
+          elif ! grep -q 'HTTP 404' "$api_error"; then
+            cat "$api_error" >&2
+            exit 1
+          fi
+
+          : >"$api_error"
+          if gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/$PRERELEASE_TAG" \
+            >/dev/null 2>"$api_error"; then
+            echo "removing existing tag $PRERELEASE_TAG"
+            gh api --method DELETE \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/$PRERELEASE_TAG"
+          elif ! grep -q 'HTTP 404' "$api_error"; then
+            cat "$api_error" >&2
+            exit 1
+          fi
+
+          gh release create "$PRERELEASE_TAG" \
+            "${archives[0]}" \
+            --target "$GITHUB_SHA" \
+            --title "GNOME $GNOME_VERSION pre-release" \
+            --prerelease \
+            --latest=false \
+            --generate-notes
