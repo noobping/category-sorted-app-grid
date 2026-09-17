@@ -1,0 +1,24 @@
+version: 1
+
+on:
+  pre-commit: [check]
+  pre-push: [check]
+  pre-receive: [check]
+
+pipelines:
+  check:
+    jobs:
+      just:
+        just: check-just
+      whitespace:
+        just: check-whitespace
+      metadata:
+        just: check-metadata
+      extension:
+        just: check-extension
+
+  build:
+    needs: [check]
+    jobs:
+      package:
+        just: package

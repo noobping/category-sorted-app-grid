@@ -1,0 +1,27 @@
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+    - when: never
+
+stages:
+  - build
+
+variables:
+  GIT_DEPTH: "2"
+
+build:
+  stage: build
+  image:
+    name: registry.gitlab.com/noobping/pipeline:latest
+    entrypoint: [""]
+  interruptible: true
+  script:
+    - pipeline --cap-jobs 4 build
+  artifacts:
+    name: category-sorted-app-grid-$CI_COMMIT_SHORT_SHA
+    paths:
+      - dist/*.zip
+    expire_in: 30 days
