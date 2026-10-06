@@ -80,7 +80,7 @@ build: check package
 package:
     #!/usr/bin/env bash
     set -euo pipefail
-    artifact='dist/category-sorted-app-grid@noobping.dev.shell-extension.zip'
+    artifact='dist/category-sorted-app-grid@noobping.dev.zip'
     files=(*.js metadata.json LICENSE)
     archive_args=()
 
